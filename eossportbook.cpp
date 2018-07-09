@@ -2,6 +2,9 @@
 #include <eosiolib/asset.hpp>
 #include <eosiolib/serialize.hpp>
 
+using std::string;
+using std::vector;
+
 class eossportbook : public eosio::contract {
 public:
     eossportbook(account_name self) : eosio::contract(self) {}
@@ -63,14 +66,55 @@ public:
 
         if(receiver==N(eossportbook)){
             eosio::print("This is my transfer. Parse and create offer or bet");
+
+            std::vector<std::string> params = parse_memo(memo);
+
+            if(params.empty()){
+                eosio::print("Params are empty.");
+            }else{
+
+                eosio::print("Params are not empty. ", params.size());
+
+                // submit offer
+                // cleos transfer tester eossportbook "12 SYS" "so:289871:2500"
+                if(params.size()==3 && params[0]=="so"){
+
+                    eosio::print("Submit offer.");
+
+                    uint64_t runner_id = std::strtoull(params[1].c_str(), NULL, 0);
+                    uint64_t price = std::strtoull(params[2].c_str(), NULL, 0);
+
+                    submitoffer(sender, runner_id, price/1000.0, amount.amount);
+
+                }else{
+                    eosio::print("Unknown operation.");
+                }
+
+            }
         }else{
             eosio::print("#NotMyTransaction");
         }
     }
 
-    // @abi action
+    std::vector<std::string> parse_memo(std::string memo){
+        vector<string> tokens;
+
+        std::size_t pos = 0;
+        while((pos = memo.find(":")) != string::npos){
+            eosio::print("Substring: ", memo.substr(0, pos).c_str());
+            tokens.push_back(memo.substr(0, pos));
+            memo.erase(0, pos+1); // +1 for delimiter (:)
+            eosio::print("Memo after erase: ", memo);
+        }
+
+        if(!memo.empty()){
+            tokens.push_back(memo);
+        }
+
+        return tokens;
+    }
+
     void submitoffer(account_name originator, uint64_t runner_id, double price, int64_t amount){
-        require_auth(originator);
 
         eosio::print("------> submitoffer ", originator, "; ", runner_id, "; ", price, "; ", amount, "\n");
 
@@ -106,12 +150,12 @@ public:
         });
 
         // ERROR - this won't work!!!!!
-        eosio::print("------> transfering funds\n");
+        /*eosio::print("------> transfering funds\n");
         eosio::action(
                 eosio::permission_level { originator,N(active)},
                 N(eosio.token),N(transfer),
                 std::make_tuple(originator, _self, eosio::asset(amount, CORE_SYMBOL),"Submit offer")
-        ).send();
+        ).send();*/
     }
 
 };
@@ -134,4 +178,4 @@ extern "C" { \
    } \
 }
 
-EOSIO_ABI_EX(eossportbook, (submitoffer)(transfer))
+EOSIO_ABI_EX(eossportbook, (transfer))
