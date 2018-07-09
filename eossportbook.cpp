@@ -3,120 +3,136 @@
 
 class eossportbook : public eosio::contract {
 public:
-    eossportbook(account_name self) : eosio::contract(self),
-                                      events(_self, _self),
-                                      runners(_self, _self),
-                                      offers(_self, _self) {}
-
-    // @abi table event i64
-    struct event {
-        uint64_t event_id;
-        std::string event_name;
-
-        uint64_t primary_key() const { return event_id; }
-
-        EOSLIB_SERIALIZE(event, (event_id)(event_name))
-    };
-
-    typedef eosio::multi_index<N(event), event> event_index;
-
-    // @abi table runner i64
-    struct runner {
-        uint64_t runner_id;
-        uint64_t event_id;
-        std::string runner_name;
-
-        uint64_t primary_key() const { return runner_id; }
-
-        EOSLIB_SERIALIZE(runner, (runner_id)(event_id)(runner_name))
-    };
-
-    typedef eosio::multi_index<N(runner), runner> runner_index;
+    eossportbook(account_name self) : eosio::contract(self){}
 
     // @abi table offer i64
     struct offer {
         uint64_t runner_id;
+        account_name originator;
         double_t price;
-        double_t max_amount;
+        double_t amount;
 
         uint64_t primary_key() const { return runner_id; }
+        account_name by_originator() const { return originator; }
 
-        EOSLIB_SERIALIZE(offer, (runner_id)(price)(max_amount))
+        EOSLIB_SERIALIZE(offer, (runner_id)(originator)(price)(amount))
     };
 
-    typedef eosio::multi_index<N(offer), offer> offer_index;
+    typedef eosio::multi_index<N(offer), offer
+      indexed_by<N(offerorig), eosio::const_mem_fun<offer, account_name, &offer::by_originator> >
+    > offer_index;
+    
+    // @abi table offer i64
+    struct offerlock {
+        uint64_t runner_id;
+        
+        uint64_t primary_key() const { return runner_id; }
 
+        EOSLIB_SERIALIZE(offerlock, (runner_id))
+    };
+
+    typedef eosio::multi_index<N(offerlock), offerlock> offerlock_index;
+
+    // @abi table offer i64
+    struct bet {
+        uint64_t runner_id;
+        account_name originator;
+        account_name acceptor;
+        uint64_t mb_offer_id;
+        double_t price;
+        double_t amount;
+
+        uint64_t primary_key() const { return runner_id; }
+        uint64_t by_mb_offer() const { return mb_offer_id; }
+
+        EOSLIB_SERIALIZE(bet, (runner_id)(originator)(acceptor)(mb_offer_id)(price)(amount))
+    };
+
+    typedef eosio::multi_index<N(bet), bet
+      indexed_by<N(mboffer), eosio::const_mem_fun<offer, uint64_t, &bet::by_mb_offer> >
+    > bet_index;
+    
     // @abi action
-    void updevents(const std::vector<event> &events_to_update) {
-        require_auth(_self);
-
-        for (auto const &e: events_to_update) {
-
-            auto itr = events.find(e.event_id);
-            if (itr != events.end()) {
-                events.modify(itr, 0, [&](auto &ev) {
-                    ev.event_name = e.event_name;
-                });
-            } else {
-                events.emplace(_self, [&](auto &ev) {
-                    ev.event_id = e.event_id;
-                    ev.event_name = e.event_name;
-                });
-            }
+    void submitoffer(account_name from, offer t_offer) {
+      // transaction have to be signed by user submitic offer
+      require_auth(from);
+      
+      // get offerlock table stored in user's scope
+      offerlock_index offerlocks(_self, from);
+      
+      // check is user have already pending transaction on this runner
+      auto itr = offerlocks.find(t_offer.runner_id);
+      eosio_assert(itr == offerlocks.end(), "Offer can be submited. There is already pending offer on this runner");
+      
+      // set temporary lock on offers on this runner
+      offerlocks.emplace(_self, [&](auto &ofl) {
+          ofl.runner_id = t_offer.runner_id;
+      });
+      
+      // deposit funds from user
+      currency::inline_transfer( from, _this_contract, quantity, "offer" );
+      
+      // add new offer to pending offers
+      offer_index offers(_self, _self);
+      offers.emplace(_self, [&](auto &of) {
+          of.runner_id = t_offer.runner_id;
+          of.price = t_offer.price;
+          of.amount = t_offer.amount
+          of.originator = t_offer.from;
+      });
+    }
+    
+    // @abi action
+    void acceptoffer(account_name orginator, uint64_t runner_id, double_t amount, uint64_t mb_offer_id, account_name acceptor) {
+      // transaction have to be signed by house wallet
+      require_auth(_self);
+      
+      offer_index offers(_self, _self);
+      auto origin_index = offers.get_index<N( offerorig )>();
+      
+      auto itr = origin_index.find(orgin);
+      while(itr!=origin_index.end){
+        offer of = *itr;
+        if(of.runner_id==runner_id){
+          
+          // create acceptor bet
+          bet_index bets(_self, originator);
+          bets.emplace( _self /*payer*/, [&]( auto& bt ) {
+            bt.runner_id = of.runner_id;
+            bt.originator = of.originator;
+            bt.acceptor = acceptor;
+            bt.mb_offer_id = mb_offer_id;
+            bt.price = of.price;
+            bt.amount = of.amount;
+         } );
+         
+         currency::inline_transfer( acceptor, _this_contract, quantity, "accepted" );
+          
+          // remove offer
+          origin_index.erase(itr)
         }
+      }
     }
-
+    
     // @abi action
-    void updrunners(const std::vector<runner> &runners_to_update) {
-        require_auth(_self);
-
-        for (auto const &r: runners_to_update) {
-            std::string rstr = r.runner_name + " -> " + std::to_string(r.runner_id) + "\n";
-            eosio::print(rstr);
-
-            auto itr = runners.find(r.runner_id);
-            if (itr != runners.end()) {
-                runners.modify(itr, 0, [&](auto &rn) {
-                    rn.runner_name = r.runner_name;
-                });
-            } else {
-                runners.emplace(_self, [&](auto &rn) {
-                    rn.runner_id = r.runner_id;
-                    rn.event_id = r.event_id;
-                    rn.runner_name = r.runner_name;
-                });
-            }
-        }
+    void payout(uint64_t mb_offer_id, bool originator_win) {
+      bet_index bets(_self, originator);
+      auto mb_offers = bets.get_index<N(mboffer)>();
+      
+      auto itr = mb_offers.find(mb_offer_id);
+      eosio_assert(itr == offerlocks.end(), "Bet not found");
+      
+      bet b = *itr;
+      
+      if(originator_win){
+        currency::inline_transfer( _self, b.originator, quantity, "win" );
+      }else{
+        currency::inline_transfer( _self, b.acceptor, quantity, "win" );
+      }
+      
+      mb_offers.erase(itr);
     }
-
-    // @abi action
-    void updoffers(const std::vector<offer>& offers_to_update) {
-        require_auth(_self);
-
-        for (auto const &o: offers_to_update) {
-
-            auto itr = offers.find(o.runner_id);
-            if (itr != offers.end()) {
-                offers.modify(itr, 0, [&](auto &of) {
-                    of.price = o.price;
-                    of.max_amount = o.max_amount;
-                });
-            } else {
-                offers.emplace(_self, [&](auto &of) {
-                    of.runner_id = o.runner_id;
-                    of.price = o.price;
-                    of.max_amount = o.max_amount;
-                });
-            }
-       }
-    }
-
-private:
-
-    event_index events;
-    runner_index runners;
-    offer_index offers;
 
 };
 
-EOSIO_ABI(eossportbook, (updrunners)(updoffers)(updevents))
+EOSIO_ABI(eossportbook, (submitoffer)(acceptoffer)(payout))
