@@ -58,6 +58,17 @@ public:
     typedef eosio::multi_index<N(offers), offer> offer_index;
 
     // @abi action
+    void transfer(account_name sender, account_name receiver, eosio::asset amount, std::string& memo){
+        eosio::print("=====> Transfer: ", sender, " -> ", receiver, "; amount: ", amount, "; info: ", memo);
+
+        if(receiver==N(eossportbook)){
+            eosio::print("This is my transfer. Parse and create offer or bet");
+        }else{
+            eosio::print("#NotMyTransaction");
+        }
+    }
+
+    // @abi action
     void submitoffer(account_name originator, uint64_t runner_id, double price, int64_t amount){
         require_auth(originator);
 
@@ -95,14 +106,32 @@ public:
         });
 
         // ERROR - this won't work!!!!!
-        /*eosio::print("------> transfering funds\n");
+        eosio::print("------> transfering funds\n");
         eosio::action(
                 eosio::permission_level { originator,N(active)},
                 N(eosio.token),N(transfer),
                 std::make_tuple(originator, _self, eosio::asset(amount, CORE_SYMBOL),"Submit offer")
-        ).send();*/
+        ).send();
     }
 
 };
 
-EOSIO_ABI(eossportbook, (submitoffer))
+#define EOSIO_ABI_EX( TYPE, MEMBERS ) \
+extern "C" { \
+   void apply( uint64_t receiver, uint64_t code, uint64_t action ) { \
+      if( action == N(onerror)) { \
+         /* onerror is only valid if it is for the "eosio" code account and authorized by "eosio"'s "active permission */ \
+         eosio_assert(code == N(eosio), "onerror action's are only valid from the \"eosio\" system account"); \
+      } \
+      auto self = receiver; \
+      if( code == self || code == N(eosio.token) || action == N(onerror) ) { \
+         TYPE thiscontract( self ); \
+         switch( action ) { \
+            EOSIO_API( TYPE, MEMBERS ) \
+         } \
+         /* does not allow destructor of thiscontract to run: eosio_exit(0); */ \
+      } \
+   } \
+}
+
+EOSIO_ABI_EX(eossportbook, (submitoffer)(transfer))
