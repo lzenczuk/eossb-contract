@@ -289,14 +289,14 @@ public:
                 eosio::action(
                         eosio::permission_level{ _self, N(active) },
                         N(eosio.token), N(transfer),
-                        std::make_tuple(_self, b.originator, eosio::asset(b.originator_amount+b.acceptor_amount, S(4, SYS)), std::string("Win bet"))
+                        std::make_tuple(_self, b.originator, eosio::asset(b.originator_amount+b.acceptor_amount, S(4, EOS)), std::string("Win bet"))
                 ).send();
             }else{
                 // send all funds to acceptor
                 eosio::action(
                         eosio::permission_level{ _self, N(active) },
                         N(eosio.token), N(transfer),
-                        std::make_tuple(_self, b.acceptor, eosio::asset(b.originator_amount+b.acceptor_amount, S(4, SYS)), std::string("Win bet"))
+                        std::make_tuple(_self, b.acceptor, eosio::asset(b.originator_amount+b.acceptor_amount, S(4, EOS)), std::string("Win bet"))
                 ).send();
             }
 
