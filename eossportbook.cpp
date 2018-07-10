@@ -69,6 +69,9 @@ public:
         });
     }
 
+    const uint8_t pending = 0;
+    const uint8_t accepted = 1;
+    const uint8_t rejected = 2;
 
     // @abi table offers i64
     struct offer {
@@ -77,13 +80,17 @@ public:
         account_name originator;
         double price;
         int64_t amount;
+        uint8_t status;
 
         uint64_t primary_key() const { return offer_id; }
 
-        EOSLIB_SERIALIZE(offer, (offer_id)(runner_id)(originator)(price)(amount))
+        EOSLIB_SERIALIZE(offer, (offer_id)(runner_id)(originator)(price)(amount)(status))
     };
 
     typedef eosio::multi_index<N(offers), offer> offer_index;
+
+    const uint8_t matched = 0;
+    const uint8_t payed = 1;
 
     // @abi table bets i64
     struct bet {
@@ -96,39 +103,27 @@ public:
         double price;
         int64_t originator_amount;
         int64_t acceptor_amount;
+        uint8_t status;
 
         uint64_t primary_key() const { return bet_id; }
+        uint64_t mb_offer_index() const { return mb_offer_id; }
 
-        EOSLIB_SERIALIZE(bet, (bet_id)(offer_id)(mb_offer_id)(runner_id)(originator)(acceptor)(price)(originator_amount)(acceptor_amount))
+        EOSLIB_SERIALIZE(bet, (bet_id)(offer_id)(mb_offer_id)(runner_id)(originator)(acceptor)(price)(originator_amount)(acceptor_amount)(status))
     };
 
-    typedef eosio::multi_index<N(bets), bet> bet_index;
-
-    // @abi action
-    void inc() {
-        get_id();
-        add_log("Inc log test");
-    }
+    typedef eosio::multi_index<N(bets), bet,
+            eosio::indexed_by<N(betsbymbo), eosio::const_mem_fun<bet, uint64_t , &bet::mb_offer_index> >
+    > bet_index;
 
     // @abi action
     void transfer(account_name sender, account_name receiver, eosio::asset amount, std::string &memo) {
-        eosio::print("=====> Transfer: ", sender, " -> ", receiver, "; amount: ", amount, "; info: ", memo);
-
-        add_log("Receive transfer");
-
-        add_log("processing");
-        eosio::print("This is my transfer. Parse and create offer or bet");
-
         std::vector<std::string> params = parse_memo(memo);
 
-        if (params.empty()) {
-            eosio::print("Params are empty.");
-        } else {
-
-            eosio::print("Params are not empty. ", params.size());
+        if (!params.empty()) {
 
             // submit offer
             // cleos transfer tester eossportbook "12 SYS" "so:289871:2500"
+            // submit offer (so), runner id (289871), decimal ods * 1000 (2500)
             if (params.size() == 3 && params[0] == "so") {
 
                 eosio::print("Submit offer.");
@@ -140,6 +135,10 @@ public:
 
             } else if (params.size() == 3 && params[0] == "ao") {
 
+                // accept offer
+                // cleos transfer tester eossportbook "12 SYS" "ao:21:349289"
+                // accept offer (ao), offer id in contract (21), opposite matchbook offer id (349289)
+
                 eosio::print("Accept offer.");
 
                 uint64_t offer_id = std::strtoull(params[1].c_str(), NULL, 0);
@@ -147,8 +146,6 @@ public:
 
                 accept_offer(sender, offer_id, mb_offer_id, amount.amount);
 
-            } else {
-                eosio::print("Unknown operation.");
             }
 
         }
@@ -159,10 +156,8 @@ public:
 
         std::size_t pos = 0;
         while ((pos = memo.find(":")) != string::npos) {
-            eosio::print("Substring: ", memo.substr(0, pos).c_str());
             tokens.push_back(memo.substr(0, pos));
             memo.erase(0, pos + 1); // +1 for delimiter (:)
-            eosio::print("Memo after erase: ", memo);
         }
 
         if (!memo.empty()) {
@@ -174,18 +169,8 @@ public:
 
     void submit_offer(account_name originator, uint64_t runner_id, double price, int64_t amount) {
 
-        eosio::print("------> submitoffer ", originator, "; ", runner_id, "; ", price, "; ", amount, "\n");
-
-        eosio_assert(price > 0.0, "offer price have to be bigger then 0");
-        eosio_assert(amount > 0.0, "offer amount have to be bigger then 0");
-
-        eosio::print("------> getting new offer id\n");
-
         uint64_t new_offer_id = get_id();
 
-        eosio::print("------> new offer id", new_offer_id, "\n");
-
-        eosio::print("------> inserting offer to global scope\n");
         // Table with all offers in contract scope
         offer_index global_offers_db(_self, _self);
         global_offers_db.emplace(_self, [&](offer &nof) {
@@ -194,9 +179,9 @@ public:
             nof.originator = originator;
             nof.price = price;
             nof.amount = amount;
+            nof.status = pending;
         });
 
-        eosio::print("------> inserting offer to originator scope\n");
         // Table with account's offer in account scope
         offer_index originator_offers_db(_self, originator);
         originator_offers_db.emplace(_self, [&](offer &nof) {
@@ -205,26 +190,21 @@ public:
             nof.originator = originator;
             nof.price = price;
             nof.amount = amount;
+            nof.status = pending;
         });
     }
 
     void accept_offer(account_name acceptor, uint64_t offer_id, uint64_t mb_offer_id, int64_t amount) {
 
-        eosio::print("------> accept ", acceptor, "; ", offer_id, "; ", mb_offer_id);
-
         uint64_t new_bet_id = get_id();
-
-        eosio::print("------> new bet id", new_bet_id, "\n");
 
         offer_index global_offers_db(_self, _self);
         auto itr = global_offers_db.find(offer_id);
-        if(itr == global_offers_db.end()){
-            add_log("Offer not found");
-            eosio::print("------> offer not found", offer_id, "\n");
-        }else{
+        if(itr != global_offers_db.end()){
             offer of = *itr;
 
-            add_log("Add global bet");
+            eosio::print("-------------> insert global bet \n");
+
             bet_index global_bets_db(_self, _self);
             global_bets_db.emplace(_self, [&](bet& nb) {
                 nb.bet_id = new_bet_id;
@@ -236,9 +216,11 @@ public:
                 nb.originator_amount = of.amount;
                 nb.acceptor = acceptor;
                 nb.acceptor_amount = amount;
+                nb.status = matched;
             });
 
-            add_log("Add originator bet");
+            eosio::print("-------------> insert originator bet \n");
+
             bet_index originator_bets_db(_self, of.originator);
             originator_bets_db.emplace(_self, [&](bet& nb) {
                 nb.bet_id = new_bet_id;
@@ -250,9 +232,11 @@ public:
                 nb.originator_amount = of.amount;
                 nb.acceptor = acceptor;
                 nb.acceptor_amount = amount;
+                nb.status = matched;
             });
 
-            add_log("Add acceptor bet");
+            eosio::print("-------------> insert acceptor bet \n");
+
             bet_index acceptor_bets_db(_self, acceptor);
             acceptor_bets_db.emplace(_self, [&](bet& nb) {
                 nb.bet_id = new_bet_id;
@@ -264,10 +248,85 @@ public:
                 nb.originator_amount = of.amount;
                 nb.acceptor = acceptor;
                 nb.acceptor_amount = amount;
+                nb.status = matched;
             });
+
+            eosio::print("-------------> update global offer \n");
+
+            global_offers_db.modify(itr, 0, [&](offer &of2u) {
+                of2u.status = accepted;
+            });
+
+            eosio::print("-------------> update originator offer \n");
+
+            // Update offer status in originator scope
+            offer_index originator_offers_db(_self, of.originator);
+            auto ofitr = originator_offers_db.find(of.offer_id);
+            if(ofitr != originator_offers_db.end()){
+                originator_offers_db.modify(ofitr, 0, [&](offer &of2u) {
+                    of2u.status = accepted;
+                });
+            }
         }
     }
 
+    const uint8_t originator_win = 0;
+    const uint8_t acceptor_win = 1;
+
+    // @abi action
+    void payout(uint64_t mb_offer_id, uint8_t winner){
+
+        bet_index global_bets_db(_self, _self);
+        auto mbo_bets_db = global_bets_db.get_index<N(betsbymbo)>();
+
+        auto itr = mbo_bets_db.find(mb_offer_id);
+        if(itr != mbo_bets_db.end()){
+
+            bet b = *itr;
+
+            if(winner == originator_win){
+                // send all funds to originator
+                eosio::action(
+                        eosio::permission_level{ _self, N(active) },
+                        N(eosio.token), N(transfer),
+                        std::make_tuple(_self, b.originator, eosio::asset(b.originator_amount+b.acceptor_amount, S(4, SYS)), std::string("Win bet"))
+                ).send();
+            }else{
+                // send all funds to acceptor
+                eosio::action(
+                        eosio::permission_level{ _self, N(active) },
+                        N(eosio.token), N(transfer),
+                        std::make_tuple(_self, b.acceptor, eosio::asset(b.originator_amount+b.acceptor_amount, S(4, SYS)), std::string("Win bet"))
+                ).send();
+            }
+
+            // update global bet status
+            auto gbitr = global_bets_db.find(b.bet_id);
+            if(gbitr != global_bets_db.end()){
+                global_bets_db.modify(gbitr, 0, [&](bet &b2u) {
+                    b2u.status = payed;
+                });
+            }
+
+            // update originator bet status
+            bet_index originator_bets_db(_self, b.originator);
+            auto obitr = originator_bets_db.find(b.bet_id);
+            if(obitr != originator_bets_db.end()){
+                originator_bets_db.modify(obitr, 0, [&](bet &b2u) {
+                    b2u.status = payed;
+                });
+            }
+
+            // update acceptor bet status
+            bet_index acceptor_bets_db(_self, b.acceptor);
+            auto abitr = acceptor_bets_db.find(b.bet_id);
+            if(abitr != acceptor_bets_db.end()){
+                acceptor_bets_db.modify(abitr, 0, [&](bet &b2u) {
+                    b2u.status = payed;
+                });
+            }
+        }
+    }
 };
 
 #define EOSIO_ABI_EX(TYPE, MEMBERS) \
@@ -288,4 +347,4 @@ extern "C" { \
    } \
 }
 
-EOSIO_ABI_EX(eossportbook, (transfer)(inc))
+EOSIO_ABI_EX(eossportbook, (transfer)(payout))
