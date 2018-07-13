@@ -1,6 +1,8 @@
 #include <eosiolib/eosio.hpp>
 #include <eosiolib/asset.hpp>
+#include <eosiolib/datastream.hpp>
 #include <eosiolib/serialize.hpp>
+#include <eosiolib/transaction.hpp>
 
 using std::string;
 using std::vector;
@@ -286,21 +288,34 @@ public:
 
             bet b = *itr;
 
-            if(winner == originator_win){
-                // send all funds to originator
-                eosio::action(
-                        eosio::permission_level{ _self, N(active) },
-                        N(eosio.token), N(transfer),
-                        std::make_tuple(_self, b.originator, eosio::asset(b.originator_amount+b.acceptor_amount, S(4, EOS)), std::string("Win bet"))
-                ).send();
-            }else{
                 // send all funds to acceptor
-                eosio::action(
-                        eosio::permission_level{ _self, N(active) },
-                        N(eosio.token), N(transfer),
-                        std::make_tuple(_self, b.acceptor, eosio::asset(b.originator_amount+b.acceptor_amount, S(4, EOS)), std::string("Win bet"))
-                ).send();
-            }
+                eosio::print("-----------> create action\n");
+            /*eosio::action transfer_action = eosio::action(
+                                    eosio::permission_level{ _self, N(active) },
+                                    N(eosio.token), N(transfer),
+                                    std::make_tuple(_self, b.acceptor, eosio::asset(b.originator_amount+b.acceptor_amount, S(4, EOS)), std::string("Win bet"))
+                            );
+
+            eosio::print("-----------> create transaction\n");
+            eosio::transaction ft = eosio::transaction();*/
+
+            eosio::transaction out;
+            out.actions.emplace_back(eosio::permission_level{_self, N(active)}, N(eosio.token), N(transfer), std::make_tuple(_self, b.acceptor, eosio::asset(b.originator_amount+b.acceptor_amount, S(4, SYS)), std::string("Win bet")));
+            out.delay_sec = 5;
+            out.send(get_id(), _self);
+
+            /*eosio::print("-----------> add action to transaction\n");
+                //ft.actions.push_back(transfer_action);
+                ft.actions.push_back(transfer_action);
+
+                //const eosio::bytes &serialized_transfer_action = pack(transfer_action);
+
+                eosio::print("-----------> send transaction\n");
+                //send_deferred(1236534, _self, serialized_transfer_action.data(), serialized_transfer_action.size());
+                ft.send(123, _self);*/
+                eosio::print("-----------> done\n");
+                //transfer_action.send();
+
 
             // update global bet status
             auto gbitr = global_bets_db.find(b.bet_id);
