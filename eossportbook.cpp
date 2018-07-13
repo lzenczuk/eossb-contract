@@ -90,7 +90,9 @@ public:
     typedef eosio::multi_index<N(offers), offer> offer_index;
 
     const uint8_t matched = 0;
-    const uint8_t payed = 1;
+    const uint8_t win = 1;
+    const uint8_t lost = 2;
+    const uint8_t payed = 3; // this for global bets table
 
     // @abi table bets i64
     struct bet {
@@ -313,7 +315,11 @@ public:
             auto obitr = originator_bets_db.find(b.bet_id);
             if(obitr != originator_bets_db.end()){
                 originator_bets_db.modify(obitr, 0, [&](bet &b2u) {
-                    b2u.status = payed;
+                    if(winner == originator_win){
+                        b2u.status = win;
+                    }else{
+                        b2u.status = lost;
+                    }
                 });
             }
 
@@ -322,7 +328,11 @@ public:
             auto abitr = acceptor_bets_db.find(b.bet_id);
             if(abitr != acceptor_bets_db.end()){
                 acceptor_bets_db.modify(abitr, 0, [&](bet &b2u) {
-                    b2u.status = payed;
+                    if(winner == originator_win){
+                        b2u.status = lost;
+                    }else{
+                        b2u.status = win;
+                    }
                 });
             }
         }
