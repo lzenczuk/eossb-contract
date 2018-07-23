@@ -339,6 +339,9 @@ public:
     }
 };
 
+// Code from monstereos contract
+// https://github.com/leordev/monstereos/blob/904f8609a52287bd9c6e975be193ee1aeb11378e/contracts/pet/pet.cpp#L264
+
 #define EOSIO_ABI_EX(TYPE, MEMBERS) \
 extern "C" { \
    void apply( uint64_t receiver, uint64_t code, uint64_t action ) { \
